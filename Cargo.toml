@@ -4,4 +4,14 @@ version = "0.1.0"
 authors = ["Reeto Chatterjee <reetobratachatterjee@gmail.com>"]
 edition = "2018"
 
+[lib]
+name = "torrent"
+path = "src/torrent/lib.rs"
+
 [dependencies]
+serde = "1.0.84"
+serde_bytes = "0.10.4"
+serde_derive = "1.0.84"
+failure = "0.1.5"
+serde_bencode = "0.2.0"
+rust-crypto = "0.2.36"
