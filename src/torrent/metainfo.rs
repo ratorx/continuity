@@ -1,6 +1,7 @@
 use crypto::digest::Digest;
 use crypto::sha1::Sha1;
 use failure::{self, Fail};
+use log::debug;
 use serde_derive::{Deserialize, Serialize};
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -43,6 +44,7 @@ impl Info {
 
     fn hash(&self) -> Result<[u8; 20], Error> {
         self.validate()?;
+        debug!("Calculating info_hash");
         let mut hash: [u8; 20] = [0; 20];
         let mut hasher = Sha1::new();
         hasher.input(&serde_bencode::to_bytes(self).expect("Failed to serialize info hash"));
@@ -132,11 +134,11 @@ mod tests {
     }
     #[test]
     fn test_info_hash() -> Result<(), failure::Error> {
-        const TORRENT_FILE: &'static str = "data/test.torrent";
-        let mut f = File::open(&TORRENT_FILE).expect(&format!("{} does ", &TORRENT_FILE));
+        const TORRENT_FILE: &str = "data/test.torrent";
+        let mut f = File::open(&TORRENT_FILE).unwrap_or_else(|_| panic!("{} does ", &TORRENT_FILE));
         let mut b: Vec<u8> = Vec::new();
         f.read_to_end(&mut b)
-            .expect(&format!("could not read {}", &TORRENT_FILE));
+            .unwrap_or_else(|_| panic!("could not read {}", &TORRENT_FILE));
         let m: Metainfo = serde_bencode::from_bytes(&b).expect("Failed to deserialize");
         assert_eq!(
             m.info_hash()?,
