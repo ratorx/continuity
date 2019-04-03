@@ -69,7 +69,7 @@ struct Request<'a, 'b, 'c> {
     #[serde(flatten)]
     torrent_state: &'c TorrentState,
     #[serde(rename = "numwant")]
-    num_peers: Option<u64>,
+    num_peers: u64,
     event: Option<Event>,
 }
 
@@ -175,7 +175,7 @@ impl<'a> HTTP<'a> {
             tracker_id: self.tracker_id.as_ref().map(|x| x.as_str()),
             port: self.port,
             torrent_state: state,
-            num_peers,
+            num_peers: num_peers.unwrap_or(DEFAULT_NUM_PEERS),
             event: None,
         };
 
@@ -210,7 +210,7 @@ mod tests {
             downloaded: 0,
             left: 1000,
         };
-        let num_peers = Some(10);
+        let num_peers = 10;
         let event = Some(Event::Started);
         let req = Request {
             base: Url::parse("https://localhost/announce")?,
