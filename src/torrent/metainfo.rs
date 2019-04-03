@@ -27,10 +27,7 @@ impl Info {
             return Err(Error::ZeroPieceLength);
         }
 
-        let mut num_pieces = self.length / self.piece_length;
-        if num_pieces * self.piece_length < self.length {
-            num_pieces += 1
-        }
+        let num_pieces = 1 + (self.length - 1) / self.piece_length;
 
         if self.pieces.len() % 20 != 0 {
             return Err(Error::InvalidPieceArrayLength(
