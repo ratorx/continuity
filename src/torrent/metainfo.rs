@@ -3,6 +3,9 @@ use crypto::sha1::Sha1;
 use failure::{self, Fail};
 use log::debug;
 use serde_derive::{Deserialize, Serialize};
+use std::fs::File;
+use std::io::Read;
+use std::path::Path;
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Info {
@@ -80,13 +83,19 @@ impl Metainfo {
     pub fn info_hash(&self) -> Result<[u8; 20], Error> {
         self.info.hash()
     }
+
+    pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, failure::Error> {
+        let mut f = File::open(path)?;
+        let mut b: Vec<u8> = Vec::with_capacity(f.metadata()?.len() as usize);
+        f.read_to_end(&mut b)?;
+        let m: Metainfo = serde_bencode::from_bytes(&b)?;
+        Ok(m)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs::File;
-    use std::io::Read;
 
     #[test]
     fn test_validate_info() {
@@ -134,12 +143,7 @@ mod tests {
     }
     #[test]
     fn test_info_hash() -> Result<(), failure::Error> {
-        const TORRENT_FILE: &str = "data/test.torrent";
-        let mut f = File::open(&TORRENT_FILE).unwrap_or_else(|_| panic!("{} does ", &TORRENT_FILE));
-        let mut b: Vec<u8> = Vec::new();
-        f.read_to_end(&mut b)
-            .unwrap_or_else(|_| panic!("could not read {}", &TORRENT_FILE));
-        let m: Metainfo = serde_bencode::from_bytes(&b).expect("Failed to deserialize");
+        let m = Metainfo::from_file("data/test.torrent")?;
         assert_eq!(
             m.info_hash()?,
             [
