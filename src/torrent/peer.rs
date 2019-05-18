@@ -1,7 +1,11 @@
-use bitvec::BitVec;
+use bitvec::{bitvec, BitVec};
 use byteorder::{ReadBytesExt, WriteBytesExt, BE};
 use failure::{self, Fail};
+use log::{self, debug, error, info, warn};
+use std::fmt;
 use std::io::{self, Read, Write};
+use std::str;
+use std::sync::Arc;
 
 #[derive(Debug, Fail)]
 pub enum Error {
@@ -27,7 +31,7 @@ impl From<io::Error> for Error {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(PartialEq)]
 pub enum Message {
     KeepAlive,
     Choke,
@@ -38,8 +42,26 @@ pub enum Message {
     Request(u32, u32, u32), // piece index, byte index, length
     Cancel(u32, u32, u32),
     BitField(BitVec),
-    Piece(u32, u32, Vec<u8>),
+    Piece(u32, u32, Arc<Vec<u8>>),
     Port(u16),
+}
+
+impl fmt::Debug for Message {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Message::KeepAlive => write!(f, "keep-alive"),
+            Message::Choke => write!(f, "choke"),
+            Message::Unchoke => write!(f, "unchoke"),
+            Message::Interested => write!(f, "interested"),
+            Message::NotInterested => write!(f, "not interested"),
+            Message::Have(i) => write!(f, "Have({})", i),
+            Message::Request(i, b, l) => write!(f, "Request({}, {}, {})", i, b, l),
+            Message::Cancel(i, b, l) => write!(f, "Cancel({}, {}, {})", i, b, l),
+            Message::BitField(bv) => write!(f, "BitField({})", bv.len()),
+            Message::Piece(i, b, p) => write!(f, "Piece({}, {}, {})", i, b, p.len()),
+            Message::Port(p) => write!(f, "Port({})", p),
+        }
+    }
 }
 
 impl Message {
@@ -115,7 +137,7 @@ impl Message {
     /// If this function returns an error, then recovery is almost impossible, since no state about the channel is kept; it is undeterminable at what stage of message parsing an error occured.
     /// This means all non-terminal errors should be handled by this function.
     /// TODO: Possibly refactor this and message sending out into a Sender and Receiver Class
-    pub fn receive<R: Read>(mut reader: R) -> Result<Self, Error> {
+    pub fn recv<R: Read>(mut reader: R) -> Result<Self, Error> {
         let length = reader.read_u32::<BE>()?;
         if length == 0 {
             return Ok(Message::KeepAlive);
@@ -131,9 +153,8 @@ impl Message {
                 if length < 2 {
                     return Err(Error::SmallLength(2, length));
                 }
-                let bv_len = 4 * (length - 1);
-                let mut bv = BitVec::with_capacity(bv_len as usize);
-                unsafe { bv.set_len(bv_len as usize) }
+                let bv_len = 8 * (length - 1);
+                let mut bv = bitvec![0; bv_len as usize];
                 reader.read_exact(bv.as_mut_slice())?;
                 Message::BitField(bv)
             }
@@ -152,7 +173,7 @@ impl Message {
                 let vec_len = length - 9;
                 let mut v: Vec<u8> = Vec::with_capacity(vec_len as usize);
                 reader.take(vec_len.into()).read_to_end(&mut v)?;
-                Message::Piece(index, begin, v)
+                Message::Piece(index, begin, Arc::new(v))
             }
             8 => {
                 let index = reader.read_u32::<BE>()?;
@@ -165,6 +186,63 @@ impl Message {
         };
         ret.validate(length)?;
         Ok(ret)
+    }
+}
+
+// TODO: Test
+pub struct Handshake {
+    info_hash: [u8; 20],
+    peer_id: [u8; 20],
+}
+
+impl Handshake {
+    pub fn send<W: Write>(
+        info_hash: &[u8],
+        peer_id: Option<&[u8]>,
+        mut writer: W,
+    ) -> io::Result<()> {
+        writer.write_u8(19)?;
+        writer.write("BitTorrent Protocol".as_bytes())?;
+        writer.write(&[0; 8])?;
+        writer.write(info_hash)?;
+        if let Some(pid) = peer_id {
+            writer.write(pid)?;
+        }
+        Ok(())
+    }
+
+    pub fn recv<R: Read>(info_hash: &[u8], client_id: &[u8], mut reader: R) -> bool {
+        let pstr_len = reader.read_u8().unwrap();
+        let mut sent_data: Vec<u8> = vec![0; pstr_len as usize];
+        reader.read_exact(&mut sent_data).unwrap();
+        debug!("pstr: {}", str::from_utf8(&sent_data).unwrap());
+
+        if let Err(_) = io::copy(&mut reader.by_ref().take(8), &mut io::sink()) {
+            return false;
+        }
+
+        let mut sent_data = [0; 20];
+
+        if let Err(_) = reader.read_exact(&mut sent_data) {
+            return false;
+        } else if &sent_data != info_hash {
+            error!(
+                "Invalid info hash (expected: {:x?}, actual: {:x?})",
+                info_hash, sent_data
+            );
+            return false;
+        }
+        debug!("Verified info hash");
+
+        sent_data = [0; 20];
+        if let Err(_) = reader.read_exact(&mut sent_data) {
+            return false;
+        } else if client_id == &sent_data {
+            return false;
+        }
+        debug!("Verified peer id {}", str::from_utf8(&sent_data).unwrap());
+
+        true
     }
 }
 
@@ -185,7 +263,7 @@ mod tests {
             Message::Have(2),
             Message::BitField(bitvec![0, 0, 0, 1]),
             Message::Request(2, 0, 3),
-            Message::Piece(2, 0, vec![2, 8, 5]),
+            Message::Piece(2, 0, Arc::new(vec![2, 8, 5])),
             Message::Cancel(2, 0, 3),
             Message::Port(1000),
         ];
@@ -274,16 +352,16 @@ mod tests {
             Message::Interested,
             Message::NotInterested,
             Message::Have(2),
-            Message::BitField(bitvec![0, 0, 0, 1]),
+            Message::BitField(bitvec![0, 0, 0, 1, 0, 0, 0, 0]),
             Message::Request(2, 0, 3),
-            Message::Piece(2, 0, vec![2, 8, 5]),
+            Message::Piece(2, 0, Arc::new(vec![2, 8, 5])),
             Message::Cancel(2, 0, 3),
             Message::Port(1000),
         ];
         let len = v.len();
         let mut it = v.into_iter();
         for _i in 0..len {
-            assert_eq!(Message::receive(&mut msg_buf)?, it.next().unwrap());
+            assert_eq!(Message::recv(&mut msg_buf)?, it.next().unwrap());
         }
         Ok(())
     }
