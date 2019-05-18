@@ -1,12 +1,13 @@
-use super::{PeerInfo, TorrentState};
+use super::{Discover, PeerInfo, TorrentState};
 use crate::metainfo::Metainfo;
 use failure::{self, Fail};
 use log::debug;
 use reqwest::{self, Client, Method, Url};
 use serde_derive::{Deserialize, Serialize};
 use serde_urlencoded;
+use std::io::Read;
 use std::sync::Arc;
-use url::percent_encoding::{percent_encode, DEFAULT_ENCODE_SET};
+use url::percent_encoding::{percent_encode, USERINFO_ENCODE_SET};
 
 const DEFAULT_NUM_PEERS: u64 = 30;
 
@@ -56,7 +57,7 @@ impl From<serde_bencode::error::Error> for Error {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 struct Request<'a, 'b, 'c> {
     #[serde(skip)]
     base: Url,
@@ -79,18 +80,18 @@ impl Request<'_, '_, '_> {
         let mut query = serde_urlencoded::to_string(&self)?;
         query.push_str("&info_hash=");
         query.push_str(self.info_hash);
+        // Compatibility with new clients
+        query.push_str("&compact=1");
         let mut base = self.base;
         base.set_query(Some(&query));
         Ok(base)
     }
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Debug)]
 struct Valid {
-    #[serde(rename = "warning message")]
     warning_message: Option<String>,
     interval: u64,
-    #[serde(rename = "tracker id")]
     tracker_id: Option<String>,
     peers: Vec<PeerInfo>,
 }
@@ -105,7 +106,7 @@ impl Valid {
             warning_message: res.warning_message,
             interval: res.interval.unwrap(),
             tracker_id: res.tracker_id,
-            peers: res.peers.unwrap(),
+            peers: PeerInfo::deserialize(&mut res.peers.unwrap().as_slice()).unwrap(),
         })
     }
 }
@@ -119,7 +120,8 @@ struct Response {
     #[serde(rename = "warning message")]
     warning_message: Option<String>,
     interval: Option<u64>,
-    peers: Option<Vec<PeerInfo>>,
+    #[serde(with = "serde_bytes")]
+    peers: Option<Vec<u8>>,
 }
 
 pub struct HTTP<'a> {
@@ -149,8 +151,11 @@ impl<'a> HTTP<'a> {
             info_hash: None,
         }
     }
+}
 
-    pub fn get_peers(
+impl<'a> Discover for HTTP<'a> {
+    type Error = Error;
+    fn get_peers(
         &mut self,
         state: &TorrentState,
         num_peers: Option<u64>,
@@ -162,7 +167,7 @@ impl<'a> HTTP<'a> {
                         .metainfo
                         .info_hash()
                         .expect("Invalid metainfo provided"),
-                    DEFAULT_ENCODE_SET,
+                    USERINFO_ENCODE_SET,
                 )
                 .to_string(),
             );
@@ -176,13 +181,20 @@ impl<'a> HTTP<'a> {
             port: self.port,
             torrent_state: state,
             num_peers: num_peers.unwrap_or(DEFAULT_NUM_PEERS),
-            event: None,
+            event: match self.announced {
+                true => None,
+                false => {
+                    self.announced = true;
+                    Some(Event::Started)
+                }
+            },
         };
 
         let http_request = reqwest::Request::new(Method::GET, req.into_url()?);
         let mut http_response = self.client.execute(http_request)?.error_for_status()?;
-        let s = http_response.text()?;
-        let res: Response = serde_bencode::de::from_str(&s)?;
+        let mut v = Vec::new();
+        http_response.read_to_end(&mut v).unwrap();
+        let res: Response = serde_bencode::de::from_bytes(&v)?;
         match Valid::from_response(res) {
             Ok(v) => {
                 self.tracker_id = v.tracker_id;
@@ -198,6 +210,8 @@ mod tests {
     use super::*;
     use mockito::{self, mock, Matcher};
     use std::borrow::Cow;
+    use std::net::{Ipv4Addr, SocketAddrV4};
+    use std::str::FromStr;
 
     #[test]
     fn test_url_serialization() -> Result<(), failure::Error> {
@@ -224,7 +238,6 @@ mod tests {
         };
         let url = req.into_url()?;
         let mut pairs = url.query_pairs();
-        assert_eq!(pairs.count(), 8);
         assert_eq!(
             pairs.next(),
             Some((Cow::Borrowed("peer_id"), Cow::Borrowed("CN1")))
@@ -257,6 +270,11 @@ mod tests {
             pairs.next(),
             Some((Cow::Borrowed("info_hash"), Cow::Borrowed("test")))
         );
+        assert_eq!(
+            pairs.next(),
+            Some((Cow::Borrowed("compact"), Cow::Borrowed("1")))
+        );
+        assert_eq!(pairs.next(), None);
         Ok(())
     }
 
@@ -284,17 +302,13 @@ mod tests {
         assert_eq!(
             it.next(),
             Some(&PeerInfo {
-                id: None,
-                ip: String::from("91.64.137.190"),
-                port: 51413
+                addr: SocketAddrV4::new(Ipv4Addr::from_str("91.64.137.190").unwrap(), 51413)
             })
         );
         assert_eq!(
             it.next(),
             Some(&PeerInfo {
-                id: None,
-                ip: String::from("92.62.63.75"),
-                port: 6881
+                addr: SocketAddrV4::new(Ipv4Addr::from_str("92.62.63.75").unwrap(), 6881)
             })
         );
         Ok(())
