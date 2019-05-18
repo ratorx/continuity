@@ -6,6 +6,7 @@ use serde_derive::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
+use std::str::FromStr;
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Info {
@@ -27,19 +28,37 @@ impl Info {
             return Err(Error::ZeroPieceLength);
         }
 
-        let num_pieces = 1 + (self.length - 1) / self.piece_length;
-
         if self.pieces.len() % 20 != 0 {
             return Err(Error::InvalidPieceArrayLength(
                 "length of pieces array is not a multiple of 20".to_owned(),
             ));
-        } else if num_pieces != self.pieces.len() / 20 {
+        } else if self.num_pieces() as usize != self.pieces.len() / 20 {
             return Err(Error::InvalidPieceArrayLength(
                 "number of pieces not equal to size of pieces array".to_owned(),
             ));
         }
 
         Ok(())
+    }
+
+    fn verify_piece(&self, index: u32, piece: &[u8]) -> bool {
+        let mut hash: [u8; 20] = [0; 20];
+        let mut hasher = Sha1::new();
+        hasher.input(piece);
+        hasher.result(&mut hash);
+        return hash == &self.pieces[index as usize * 20..(index as usize + 1) * 20];
+    }
+
+    fn piece_size(&self, index: u32) -> u32 {
+        let num_pieces = self.num_pieces() as usize;
+        if index as usize == num_pieces - 1 {
+            return (self.length - (num_pieces - 1) * self.piece_length) as u32;
+        }
+        self.piece_length as u32
+    }
+
+    fn num_pieces(&self) -> u32 {
+        (1 + (self.length - 1) / self.piece_length) as u32
     }
 
     fn hash(&self) -> Result<[u8; 20], Error> {
@@ -53,7 +72,7 @@ impl Info {
     }
 }
 
-#[derive(Debug, Fail, PartialEq)]
+#[derive(Debug, Fail)]
 pub enum Error {
     #[fail(display = "invalid pieces array length: {}", _0)]
     InvalidPieceArrayLength(String),
@@ -88,11 +107,34 @@ impl Metainfo {
         let m: Metainfo = serde_bencode::from_bytes(&b)?;
         Ok(m)
     }
+
+    // TODO: Test
+    pub fn verify_piece(&self, index: u32, piece: &[u8]) -> bool {
+        self.info.verify_piece(index, piece)
+    }
+
+    // TODO: Test
+    pub fn get_piece_size(&self, index: u32) -> u32 {
+        self.info.piece_size(index)
+    }
+
+    pub fn num_pieces(&self) -> u32 {
+        self.info.num_pieces()
+    }
+}
+
+impl FromStr for Metainfo {
+    type Err = failure::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Metainfo::from_file(s)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use matches::matches;
 
     #[test]
     fn test_validate_info() {
@@ -129,9 +171,18 @@ mod tests {
             },
         ];
 
-        assert_eq!(infos[0].validate().unwrap_err(), Error::InvalidName);
-        assert_eq!(infos[1].validate().unwrap_err(), Error::ZeroLength);
-        assert_eq!(infos[2].validate().unwrap_err(), Error::ZeroPieceLength);
+        assert!(matches!(
+            infos[0].validate().unwrap_err(),
+            Error::InvalidName
+        ));
+        assert!(matches!(
+            infos[1].validate().unwrap_err(),
+            Error::ZeroLength
+        ));
+        assert!(matches!(
+            infos[2].validate().unwrap_err(),
+            Error::ZeroPieceLength
+        ));
         match infos[3].validate() {
             Err(Error::InvalidPieceArrayLength(_)) => (),
             _ => assert!(false),
