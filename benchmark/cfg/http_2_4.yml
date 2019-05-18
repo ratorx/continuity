@@ -1,0 +1,58 @@
+version: '3'
+services:
+  seed0:
+    image: ratorx/http
+    command: --directory /jellyfish 5000
+    volumes:
+      - ./jellyfish:/jellyfish:ro
+    cap_add:
+      - NET_ADMIN
+  seed1:
+    image: ratorx/http
+    command: --directory /jellyfish 5000
+    volumes:
+      - ./jellyfish:/jellyfish:ro
+    cap_add:
+      - NET_ADMIN
+  peer0:
+    image: ratorx/curl
+    command: seed0:5000/jellyfish-110-mbps-hd-hevc.mkv
+    volumes:
+      - ./jellyfish:/jellyfish:ro
+    depends_on:
+      - seed0
+    cap_add:
+      - NET_ADMIN
+  peer1:
+    image: ratorx/curl
+    command: seed0:5000/jellyfish-110-mbps-hd-hevc.mkv
+    volumes:
+      - ./jellyfish:/jellyfish:ro
+    depends_on:
+      - seed0
+    cap_add:
+      - NET_ADMIN
+  peer2:
+    image: ratorx/curl
+    command: seed1:5000/jellyfish-110-mbps-hd-hevc.mkv
+    volumes:
+      - ./jellyfish:/jellyfish:ro
+    depends_on:
+      - seed1
+    cap_add:
+      - NET_ADMIN
+  peer3:
+    image: ratorx/curl
+    command: seed1:5000/jellyfish-110-mbps-hd-hevc.mkv
+    volumes:
+      - ./jellyfish:/jellyfish:ro
+    depends_on:
+      - seed1
+    cap_add:
+      - NET_ADMIN
+networks:
+  default:
+    external:
+      name: swarm
+
+# vim: set ft=yaml.docker-compose:tabstop=2:shiftwidth=2:

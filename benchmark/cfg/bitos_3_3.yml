@@ -1,0 +1,73 @@
+version: '3'
+services:
+  tracker:
+    image: ratorx/opentracker
+  peer0:
+    image: ratorx/continuity
+    command: -vv jellyfish/jellyfish-110-mbps-hd-hevc.mkv.torrent -m torrent -a bitos
+    volumes:
+      - ./jellyfish:/continuity/jellyfish:ro
+    depends_on:
+      - tracker
+      - seed0
+      - seed1
+      - seed2
+    cap_add:
+      - NET_ADMIN
+  peer1:
+    image: ratorx/continuity
+    command: -vv jellyfish/jellyfish-110-mbps-hd-hevc.mkv.torrent -m torrent -a bitos
+    volumes:
+      - ./jellyfish:/continuity/jellyfish:ro
+    depends_on:
+      - tracker
+      - seed0
+      - seed1
+      - seed2
+    cap_add:
+      - NET_ADMIN
+  peer2:
+    image: ratorx/continuity
+    command: -vv jellyfish/jellyfish-110-mbps-hd-hevc.mkv.torrent -m torrent -a bitos
+    volumes:
+      - ./jellyfish:/continuity/jellyfish:ro
+    depends_on:
+      - tracker
+      - seed0
+      - seed1
+      - seed2
+    cap_add:
+      - NET_ADMIN
+  seed0:
+    image: ratorx/continuity
+    command: -vv jellyfish/jellyfish-110-mbps-hd-hevc.mkv.torrent -f jellyfish/jellyfish-110-mbps-hd-hevc.mkv -m torrent
+    volumes:
+      - ./jellyfish:/continuity/jellyfish:ro
+    depends_on:
+      - tracker
+    cap_add:
+      - NET_ADMIN
+  seed1:
+    image: ratorx/continuity
+    command: -vv jellyfish/jellyfish-110-mbps-hd-hevc.mkv.torrent -f jellyfish/jellyfish-110-mbps-hd-hevc.mkv -m torrent
+    volumes:
+      - ./jellyfish:/continuity/jellyfish:ro
+    depends_on:
+      - tracker
+    cap_add:
+      - NET_ADMIN
+  seed2:
+    image: ratorx/continuity
+    command: -vv jellyfish/jellyfish-110-mbps-hd-hevc.mkv.torrent -f jellyfish/jellyfish-110-mbps-hd-hevc.mkv -m torrent
+    volumes:
+      - ./jellyfish:/continuity/jellyfish:ro
+    depends_on:
+      - tracker
+    cap_add:
+      - NET_ADMIN
+networks:
+  default:
+    external:
+      name: swarm
+
+# vim: set ft=yaml.docker-compose:tabstop=2:shiftwidth=2:
