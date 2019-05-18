@@ -3,3 +3,13 @@
 
 # ctags
 tags
+
+# benchmark
+benchmark/data
+benchmark/graphs
+
+# data
+jellyfish
+
+# Archive
+continuity.tar.gz
